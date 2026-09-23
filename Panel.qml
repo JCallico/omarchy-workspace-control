@@ -5,30 +5,32 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
-// Bar icon + config screen for the Session Restore plugin. This file is
-// both the bar-slot widget and the popup panel (same combined-entry-point
-// pattern as omarchy.tailscale / omarchy.dropbox): BarIconButton draws the
-// bar glyph, KeyboardPanel hosts the popup content below it.
+// Bar icon + config screen for Workspace Control. This file is both the
+// bar-slot widget and the popup panel (same combined-entry-point pattern
+// as omarchy.tailscale / omarchy.dropbox): BarIconButton draws the bar
+// glyph, KeyboardPanel hosts the popup content below it.
 //
-// The actual save/watch/restore logic lives in scripts/*.py, invoked here
-// as child processes. Backend design notes (why a workspace-scoped,
+// Workspace Control is meant to grow into a toolkit of workspace-related
+// features; the first one is per-workspace layout save/restore. The
+// actual save/watch/restore logic lives in scripts/*.py, invoked here as
+// child processes. Backend design notes (why a workspace-scoped,
 // event-driven watcher instead of a timer; the Lua hl.dsp.* dispatcher API
 // this Hyprland/Omarchy build actually requires) are in scripts/watch.py
 // and scripts/restore.py's docstrings.
 Panel {
   id: root
-  moduleName: "jcallico.session-restore"
-  ipcTarget: "jcallico.session-restore"
+  moduleName: "jcallico.workspace-control"
+  ipcTarget: "jcallico.workspace-control"
   // manageIpc left at its default (true): the base Panel's own IpcHandler
   // (open/close/show/hide/toggle) is all this widget needs, unlike
   // tailscale/dropbox which disable it to install a richer custom one.
 
   readonly property string pythonBin: "/usr/bin/python3"
   readonly property string scriptsPath: String(Qt.resolvedUrl("scripts")).replace("file://", "")
-  readonly property string stateDir: Quickshell.env("HOME") + "/.local/state/omarchy-session"
+  readonly property string stateDir: Quickshell.env("HOME") + "/.local/state/omarchy-workspace-control"
   readonly property string sessionFile: stateDir + "/session.json"
   readonly property string configFile: stateDir + "/config.json"
-  readonly property string restoreMarker: (Quickshell.env("XDG_RUNTIME_DIR") || ("/run/user/" + Quickshell.env("UID"))) + "/omarchy-session-restore.marker"
+  readonly property string restoreMarker: (Quickshell.env("XDG_RUNTIME_DIR") || ("/run/user/" + Quickshell.env("UID"))) + "/omarchy-workspace-control-restore.marker"
 
   readonly property bool watchEnabled: setting("watchEnabled", true)
   readonly property bool restoreOnLogin: setting("restoreOnLogin", true)
@@ -163,7 +165,7 @@ Panel {
     anchors.fill: parent
     bar: root.bar
     text: ""
-    tooltipText: "Session Restore — " + root.watchStatus
+    tooltipText: "Workspace Control — " + root.watchStatus
     onPressed: function (buttonCode) {
       if (buttonCode === Qt.RightButton) root.saveNow()
       else root.toggle()
@@ -198,7 +200,7 @@ Panel {
 
         PanelHero {
           width: parent.width
-          title: "Session Restore"
+          title: "Workspace Control"
           meta: root.watchStatus === "watching"
             ? "Watching for layout changes"
             : root.watchStatus

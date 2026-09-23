@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "id": "jcallico.session-restore",
-  "name": "Session Restore",
+  "id": "jcallico.workspace-control",
+  "name": "Workspace Control",
   "version": "0.1.0",
   "author": "jcallico",
   "license": "MIT",
-  "description": "Remembers exactly which apps are open on each workspace, at what position and size, and puts them back after a reboot or logout.",
+  "description": "A growing toolkit of workspace-related features for Omarchy. First feature: remembers exactly which apps are open on each workspace, at what position and size, and puts them back after a reboot or logout.",
   "kinds": [
     "bar-widget"
   ],
@@ -13,7 +13,7 @@
     "barWidget": "Panel.qml"
   },
   "barWidget": {
-    "displayName": "Session Restore",
+    "displayName": "Workspace Control",
     "description": "Watches your Hyprland layout per workspace and restores it on login.",
     "category": "Productivity",
     "allowMultiple": false,

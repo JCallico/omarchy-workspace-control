@@ -1,6 +1,7 @@
-# Session Restore
+# Workspace Control
 
-An Omarchy bar plugin that remembers exactly which apps are open on each
+An Omarchy bar plugin for workspace-related features, growing over time.
+The first feature: it remembers exactly which apps are open on each
 Hyprland workspace — window class, position, size, floating/pinned/
 fullscreen state, and (for terminals) the working directory — and puts
 them back after a reboot or logout.
@@ -44,8 +45,8 @@ opens the config screen; right-click triggers an immediate full save.
 ## Install
 
 ```
-git clone <this-repo> ~/.config/omarchy/plugins/jcallico.session-restore
-omarchy plugin enable jcallico.session-restore left
+git clone <this-repo> ~/.config/omarchy/plugins/jcallico.workspace-control
+omarchy plugin enable jcallico.workspace-control left
 ```
 
 (Or use `omarchy plugin add <git-url>` once published.) The plugin
@@ -54,9 +55,9 @@ hot-reloads automatically; no shell restart is required after install.
 ## Remove
 
 ```
-omarchy plugin disable jcallico.session-restore
-rm -rf ~/.config/omarchy/plugins/jcallico.session-restore
-rm -rf ~/.local/state/omarchy-session
+omarchy plugin disable jcallico.workspace-control
+rm -rf ~/.config/omarchy/plugins/jcallico.workspace-control
+rm -rf ~/.local/state/omarchy-workspace-control
 ```
 
 ## Configuration
@@ -72,11 +73,11 @@ All settings are in the plugin's popup panel (click the bar icon):
 | Excluded app classes | (none) | Comma-separated window classes to never save/restore |
 
 State lives outside the plugin folder, under
-`~/.local/state/omarchy-session/` (`session.json` for the saved layout,
-`config.json` mirroring the settings above for the Python backend to
-read) — deliberately outside `~/.config/omarchy/plugins/`, since Omarchy
-hot-reloads plugin code on any write under that directory and frequent
-state writes there would cause spurious reloads.
+`~/.local/state/omarchy-workspace-control/` (`session.json` for the saved
+layout, `config.json` mirroring the settings above for the Python backend
+to read) — deliberately outside `~/.config/omarchy/plugins/`, since
+Omarchy hot-reloads plugin code on any write under that directory and
+frequent state writes there would cause spurious reloads.
 
 ## Known limitations
 
@@ -86,3 +87,8 @@ state writes there would cause spurious reloads.
   geometry.
 - Depends on Omarchy's non-upstream Hyprland dispatcher API; a fork or
   major Hyprland version bump could change it again.
+
+## Roadmap
+
+This plugin is meant to grow into a general workspace toolkit, not stay
+scoped to save/restore. Layout persistence is just the first feature.

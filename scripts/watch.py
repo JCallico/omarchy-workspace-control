@@ -152,7 +152,7 @@ def main():
         try:
             run()
         except Exception as e:
-            print(f"session-restore watch: {e}; reconnecting in {RECONNECT_DELAY_SECS}s", file=sys.stderr)
+            print(f"workspace-control watch: {e}; reconnecting in {RECONNECT_DELAY_SECS}s", file=sys.stderr)
             time.sleep(RECONNECT_DELAY_SECS)
 
 

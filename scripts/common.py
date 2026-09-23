@@ -1,16 +1,16 @@
-"""Shared helpers for the Session Restore plugin's backend scripts.
+"""Shared helpers for Workspace Control's backend scripts.
 
-All runtime state lives under ~/.local/state/omarchy-session/, deliberately
-outside the plugin folder: Omarchy hot-reloads plugin code on any write
-under ~/.config/omarchy/plugins/, so writing frequent state/session files
-there would cause spurious shell reloads.
+All runtime state lives under ~/.local/state/omarchy-workspace-control/,
+deliberately outside the plugin folder: Omarchy hot-reloads plugin code on
+any write under ~/.config/omarchy/plugins/, so writing frequent state/
+session files there would cause spurious shell reloads.
 """
 import json
 import os
 import subprocess
 from pathlib import Path
 
-STATE_DIR = Path.home() / ".local/state/omarchy-session"
+STATE_DIR = Path.home() / ".local/state/omarchy-workspace-control"
 STATE_FILE = STATE_DIR / "session.json"
 CONFIG_FILE = STATE_DIR / "config.json"
 
