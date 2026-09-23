@@ -107,9 +107,19 @@ Panel {
       var workspaces = data.workspaces || {}
       var rows = []
       for (var name in workspaces) {
-        rows.push({ name: name, count: (workspaces[name].windows || []).length })
+        var windows = workspaces[name].windows || []
+        // Show the workspace's numeric index, not its (possibly custom,
+        // e.g. "Development") name -- a mix of plain numbers and custom
+        // names in this list reads as inconsistent/confusing. Windows
+        // carry their workspace_id, so any window in the group gives it;
+        // an empty saved workspace has none recorded, so falls back to name.
+        var id = windows.length > 0 ? windows[0].workspace_id : null
+        rows.push({ id: id, name: name, count: windows.length })
       }
-      rows.sort(function (a, b) { return a.name.localeCompare(b.name) })
+      rows.sort(function (a, b) {
+        if (a.id !== null && b.id !== null) return a.id - b.id
+        return a.name.localeCompare(b.name)
+      })
       sessionSummary = rows
     } catch (e) {
       sessionSummary = []
@@ -164,7 +174,7 @@ Panel {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: ""
+    text: ""
     tooltipText: "Workspace Control — " + root.watchStatus
     onPressed: function (buttonCode) {
       if (buttonCode === Qt.RightButton) root.saveNow()
@@ -201,22 +211,58 @@ Panel {
         PanelHero {
           width: parent.width
           title: "Workspace Control"
-          meta: root.watchStatus === "watching"
-            ? "Watching for layout changes"
-            : root.watchStatus
+          meta: root.watchStatus === "watching" ? "Active" : root.watchStatus
           foreground: root.contentForeground
           fontFamily: root.contentFontFamily
+          iconComponent: Component {
+            Text {
+              text: ""
+              textFormat: Text.PlainText
+              color: root.contentForeground
+              font.family: root.contentFontFamily
+              font.pixelSize: Style.font.display
+            }
+          }
         }
 
         Text {
           width: parent.width
-          text: root.sessionSummary.length === 0
-            ? "No saved layout yet."
-            : root.sessionSummary.map(function (r) { return r.name + ": " + r.count + " window" + (r.count === 1 ? "" : "s") }).join("  ·  ")
-          wrapMode: Text.WordWrap
+          visible: root.sessionSummary.length === 0
+          text: "No saved layout yet."
           color: Qt.darker(root.contentForeground, 1.3)
           font.family: root.contentFontFamily
           font.pixelSize: Style.font.caption
+        }
+
+        Column {
+          width: parent.width
+          spacing: Style.space(4)
+          visible: root.sessionSummary.length > 0
+
+          Repeater {
+            model: root.sessionSummary
+
+            Row {
+              width: column.width
+              spacing: Style.space(8)
+
+              Text {
+                text: ""
+                color: Qt.darker(root.contentForeground, 1.3)
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.caption - 2
+                anchors.verticalCenter: parent.verticalCenter
+              }
+
+              Text {
+                text: "Workspace " + (modelData.id !== null ? modelData.id : modelData.name) + " — " + modelData.count + " window" + (modelData.count === 1 ? "" : "s")
+                color: Qt.darker(root.contentForeground, 1.3)
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.caption
+                anchors.verticalCenter: parent.verticalCenter
+              }
+            }
+          }
         }
 
         PanelSeparator { foreground: root.contentForeground }

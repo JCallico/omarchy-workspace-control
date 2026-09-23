@@ -40,6 +40,7 @@ def window_record(c):
     return {
         "class": c.get("class"),
         "title": c.get("title"),
+        "workspace_id": (c.get("workspace") or {}).get("id"),
         "floating": c.get("floating"),
         "fullscreen": bool(c.get("fullscreen")),
         "pinned": c.get("pinned"),
