@@ -18,7 +18,7 @@ import argparse
 import os
 from pathlib import Path
 
-from common import hyprctl_json, load_config, load_state, write_state
+from common import hyprctl_json, load_config, load_state, log, write_state
 
 
 def read_cmdline(pid):
@@ -71,6 +71,41 @@ def snapshot(only_names):
     target_names = only_names if only_names is not None else set(by_name)
     for name in target_names:
         workspaces[name] = {"windows": by_name.get(name, [])}
+
+    if only_names is None:
+        # --all sees every workspace Hyprland currently knows about (live
+        # or not, since an empty-but-persistent one still has a name), so
+        # a *custom* name outside that set is orphaned -- most commonly a
+        # workspace that got renamed after being saved under its old name.
+        # Zombie entries don't just clutter the state file: on restore they
+        # relaunch apps under a workspace name that no longer means
+        # anything to Hyprland, on top of whatever's saved under the
+        # workspace's current (correct) name.
+        #
+        # Plain numeric names ("3", "4") and special-workspace names
+        # ("special:...") are NEVER pruned here even when currently absent:
+        # a non-persistent, currently-empty workspace simply doesn't appear
+        # in `hyprctl workspaces` at all, which looks identical to "renamed
+        # away" but isn't -- it's still a perfectly valid restore target,
+        # and deleting its saved layout just because nobody's on it right
+        # now would silently throw away exactly the data this plugin exists
+        # to keep.
+        known_names = {w.get("name") for w in hyprctl_json("workspaces")} | set(by_name)
+
+        def is_orphaned(name):
+            if name in known_names:
+                return False
+            if name.lstrip("-").isdigit():
+                return False
+            if name.startswith("special:"):
+                return False
+            return True
+
+        stale = [name for name in workspaces if is_orphaned(name)]
+        for name in stale:
+            del workspaces[name]
+        if stale:
+            log("save", f"pruned stale workspace entries: {stale}")
 
     write_state(state)
 

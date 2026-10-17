@@ -26,12 +26,11 @@ import json
 import os
 import socket
 import subprocess
-import sys
 import threading
 import time
 from pathlib import Path
 
-from common import hyprctl_json, load_config
+from common import hyprctl_json, load_config, log
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 SAVE_SCRIPT = SCRIPT_DIR / "save.py"
@@ -148,11 +147,12 @@ def run():
 
 
 def main():
+    log("watch", "starting")
     while True:
         try:
             run()
         except Exception as e:
-            print(f"workspace-control watch: {e}; reconnecting in {RECONNECT_DELAY_SECS}s", file=sys.stderr)
+            log("watch", f"{e}; reconnecting in {RECONNECT_DELAY_SECS}s")
             time.sleep(RECONNECT_DELAY_SECS)
 
 

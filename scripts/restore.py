@@ -26,11 +26,12 @@ Limitations (heuristic by nature):
 import shlex
 import sys
 import time
+import traceback
 from pathlib import Path
 
-from common import hyprctl_json, hyprctl_repl, lua_str, load_state
+from common import hyprctl_json, hyprctl_repl, lua_str, load_state, log, wait_for_hyprctl
 
-BOOT_SETTLE_SECS = 3
+HYPRCTL_READY_TIMEOUT_SECS = 30
 POST_LAUNCH_SETTLE_SECS = 2.0
 LAUNCH_STAGGER_SECS = 0.4
 
@@ -44,13 +45,17 @@ def dispatch(code):
     hyprctl_repl(code)
 
 
-def main():
+def run():
     state = load_state()
     if not state.get("workspaces"):
+        log("restore", "no saved session found; nothing to restore")
         print("No saved session found; nothing to restore.")
         return
 
-    time.sleep(0 if DRY_RUN else BOOT_SETTLE_SECS)
+    if not DRY_RUN:
+        if not wait_for_hyprctl(HYPRCTL_READY_TIMEOUT_SECS):
+            log("restore", f"hyprctl never became ready within {HYPRCTL_READY_TIMEOUT_SECS}s; aborting")
+            return
 
     saved = []
     for ws_name, ws in state["workspaces"].items():
@@ -75,8 +80,12 @@ def main():
         to_launch.append(w)
 
     if not to_launch:
+        log("restore", "all saved windows already open; nothing to relaunch")
         print("All saved windows already open; nothing to relaunch.")
         return
+
+    log("restore", f"relaunching {len(to_launch)} window(s): " +
+        ", ".join(f"{w['class']}@{w['workspace_name']}" for w in to_launch))
 
     for w in to_launch:
         cmd = w.get("cmdline") or []
@@ -143,6 +152,17 @@ def main():
                 f'hl.dispatch(hl.dsp.window.fullscreen({{ mode = "fullscreen", '
                 f'window = {lua_str(sel)} }}))'
             )
+
+    log("restore", "done")
+
+
+def main():
+    log("restore", "starting" + (" (dry-run)" if DRY_RUN else ""))
+    try:
+        run()
+    except Exception:
+        log("restore", "CRASHED:\n" + traceback.format_exc())
+        raise
 
 
 if __name__ == "__main__":
