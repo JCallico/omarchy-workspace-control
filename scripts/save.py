@@ -18,7 +18,7 @@ import argparse
 import os
 from pathlib import Path
 
-from common import hyprctl_json, load_config, load_state, log, write_state
+from common import hyprctl_json, load_config, load_state, log, restore_in_progress, write_state
 
 
 def read_cmdline(pid):
@@ -36,7 +36,29 @@ def read_cwd(pid):
         return None
 
 
+TERMINALS = {"foot", "alacritty", "kitty", "ghostty", "wezterm", "wezterm-gui",
+             "konsole", "gnome-terminal", "xterm"}
+
+
+def terminal_cwd(pid, argv):
+    """For a terminal emulator, the directory that matters is the one the
+    shell (or program) inside it is sitting in -- the terminal process
+    itself usually stays wherever it was launched (often /)."""
+    if not argv or Path(argv[0].split()[0]).name not in TERMINALS:
+        return None
+    try:
+        children = Path(f"/proc/{pid}/task/{pid}/children").read_text().split()
+    except OSError:
+        return None
+    for child in children:
+        cwd = read_cwd(child)
+        if cwd:
+            return cwd
+    return None
+
+
 def window_record(c):
+    argv = read_cmdline(c.get("pid", 0))
     return {
         "class": c.get("class"),
         "title": c.get("title"),
@@ -46,12 +68,15 @@ def window_record(c):
         "pinned": c.get("pinned"),
         "at": c.get("at"),
         "size": c.get("size"),
-        "cmdline": read_cmdline(c.get("pid", 0)),
+        "cmdline": argv,
         "cwd": read_cwd(c.get("pid", 0)),
+        "terminal_cwd": terminal_cwd(c.get("pid", 0), argv),
     }
 
 
 def snapshot(only_names):
+    if restore_in_progress():
+        return
     exclude = set(load_config().get("excludeClasses") or [])
     clients = [c for c in hyprctl_json("clients") if c.get("pid", 0) > 0]
 
@@ -61,51 +86,36 @@ def snapshot(only_names):
         if not cls or cls in exclude:
             continue
         name = (c.get("workspace") or {}).get("name")
-        if not name or not read_cmdline(c["pid"]):
+        if not name or name == "special:workspace-control-staging" or not read_cmdline(c["pid"]):
             continue
         by_name.setdefault(name, []).append(window_record(c))
 
     state = load_state()
     workspaces = state.setdefault("workspaces", {})
 
-    target_names = only_names if only_names is not None else set(by_name)
-    for name in target_names:
-        workspaces[name] = {"windows": by_name.get(name, [])}
+    active = (hyprctl_json("activeworkspace") or {}).get("name")
+    if active and not active.startswith("special:"):
+        state["active_workspace"] = active
 
     if only_names is None:
-        # --all sees every workspace Hyprland currently knows about (live
-        # or not, since an empty-but-persistent one still has a name), so
-        # a *custom* name outside that set is orphaned -- most commonly a
-        # workspace that got renamed after being saved under its old name.
-        # Zombie entries don't just clutter the state file: on restore they
-        # relaunch apps under a workspace name that no longer means
-        # anything to Hyprland, on top of whatever's saved under the
-        # workspace's current (correct) name.
-        #
-        # Plain numeric names ("3", "4") and special-workspace names
-        # ("special:...") are NEVER pruned here even when currently absent:
-        # a non-persistent, currently-empty workspace simply doesn't appear
-        # in `hyprctl workspaces` at all, which looks identical to "renamed
-        # away" but isn't -- it's still a perfectly valid restore target,
-        # and deleting its saved layout just because nobody's on it right
-        # now would silently throw away exactly the data this plugin exists
-        # to keep.
-        known_names = {w.get("name") for w in hyprctl_json("workspaces")} | set(by_name)
-
-        def is_orphaned(name):
-            if name in known_names:
-                return False
-            if name.lstrip("-").isdigit():
-                return False
-            if name.startswith("special:"):
-                return False
-            return True
-
-        stale = [name for name in workspaces if is_orphaned(name)]
-        for name in stale:
-            del workspaces[name]
-        if stale:
-            log("save", f"pruned stale workspace entries: {stale}")
+        # A full snapshot mirrors the live session exactly: workspaces that
+        # are now empty, or whose windows were closed while nothing was
+        # watching, or that only exist under an old name, all drop out --
+        # restoring them would resurrect windows that are gone. This is
+        # safe because --all never runs during the login window: watch.py
+        # holds off until that login's restore has finished, and every
+        # restore keeps the layout it restored from in
+        # session.pre-restore.json.
+        dropped = sorted(set(workspaces) - set(by_name))
+        state["workspaces"] = {name: {"windows": wins} for name, wins in by_name.items()}
+        if dropped:
+            log("save", f"dropped workspaces no longer open: {dropped}")
+    else:
+        for name in only_names:
+            if by_name.get(name):
+                workspaces[name] = {"windows": by_name[name]}
+            else:
+                workspaces.pop(name, None)
 
     write_state(state)
 

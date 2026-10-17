@@ -91,8 +91,12 @@ Panel {
     // Shell-level guard so a plugin hot-reload mid-session (which re-runs
     // Component.onCompleted) never re-triggers restore -- only a real
     // reboot/login clears $XDG_RUNTIME_DIR.
+    // The restore lock is taken before the marker appears: watch.py treats
+    // "marker present, no lock" as "this login's restore is done" and only
+    // then starts saving, so the lock must never trail the marker.
     var cmd = "MARKER=" + shellQuote(root.restoreMarker) + "; " +
-      "[ -e \"$MARKER\" ] || { touch \"$MARKER\"; " +
+      "[ -e \"$MARKER\" ] || { mkdir -p " + shellQuote(root.stateDir) + "; " +
+      "touch " + shellQuote(root.stateDir + "/restore.lock") + " \"$MARKER\"; " +
       shellQuote(root.pythonBin) + " -B " + shellQuote(root.scriptsPath + "/restore.py") + "; }"
     Quickshell.execDetached(["sh", "-c", cmd])
   }
@@ -129,6 +133,9 @@ Panel {
   Component.onCompleted: {
     writeConfigFile()
     if (root.restoreOnLogin) runRestoreOnLoginOnce()
+    // With restore disabled the marker still has to exist, or watch.py
+    // can't tell a mid-session restart (resync) from a fresh login (wait).
+    else Quickshell.execDetached(["touch", root.restoreMarker])
   }
 
   // ---- backend processes ---------------------------------------------

@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "jcallico.workspace-control",
   "name": "Workspace Control",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": "jcallico",
   "license": "MIT",
-  "description": "A growing toolkit of workspace-related features for Omarchy. First feature: remembers exactly which apps are open on each workspace, at what position and size, and puts them back after a reboot or logout.",
+  "description": "A growing toolkit of workspace-related features for Omarchy. First feature: restores every window to its exact workspace, position and size after a reboot, logout or crash.",
   "kinds": [
     "bar-widget"
   ],
@@ -37,7 +37,7 @@
         "key": "restoreOnLogin",
         "type": "boolean",
         "label": "Restore on login",
-        "description": "Relaunch anything missing from the last saved layout, on its saved workspace, once per login.",
+        "description": "Once per login, put every saved window back on its workspace at its exact position and size.",
         "defaultValue": true
       },
       {
@@ -54,7 +54,7 @@
         "key": "fallbackIntervalMin",
         "type": "integer",
         "label": "Safety-net rescan (minutes)",
-        "description": "Hyprland doesn't report interactive window drags/resizes as events, so this periodic full rescan is the only thing that catches floating-window geometry drift.",
+        "description": "How often to fully resync the saved layout with the live session, as a backstop to the event-driven and geometry-poll saves.",
         "min": 1,
         "max": 120,
         "step": 1,

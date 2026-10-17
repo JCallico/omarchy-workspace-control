@@ -30,11 +30,13 @@ import threading
 import time
 from pathlib import Path
 
-from common import hyprctl_json, load_config, log
+from common import RESTORE_MARKER, hyprctl_json, load_config, log, restore_in_progress
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 SAVE_SCRIPT = SCRIPT_DIR / "save.py"
 RECONNECT_DELAY_SECS = 3
+GEOMETRY_POLL_SECS = 5
+LOGIN_RESTORE_WAIT_SECS = 60
 
 
 def sock_path():
@@ -79,6 +81,37 @@ def active_window_workspace():
         return (aw.get("workspace") or {}).get("name")
     except Exception:
         return None
+
+
+def geometry_signatures():
+    sigs = {}
+    for c in hyprctl_json("clients"):
+        ws = (c.get("workspace") or {}).get("name")
+        if ws:
+            sigs.setdefault(ws, []).append((
+                c["address"], tuple(c.get("at") or ()), tuple(c.get("size") or ()),
+                c.get("floating"), c.get("fullscreen"),
+            ))
+    return {ws: tuple(sorted(v)) for ws, v in sigs.items()}
+
+
+def geometry_loop(stop_event, debouncer):
+    # Resizing a tiled split or dragging a floating window emits no IPC
+    # event at all, so without this the saved positions could be as stale
+    # as the last --all rescan when the machine goes down. One hyprctl call
+    # every few seconds is cheap, and only workspaces whose rectangles
+    # actually changed get re-saved.
+    last = {}
+    while not stop_event.wait(GEOMETRY_POLL_SECS):
+        try:
+            current = geometry_signatures()
+        except Exception:
+            continue
+        if last:
+            for ws in set(last) | set(current):
+                if last.get(ws) != current.get(ws):
+                    debouncer.trigger(ws)
+        last = current
 
 
 def fallback_loop(stop_event):
@@ -127,8 +160,8 @@ def run():
     }
 
     stop_event = threading.Event()
-    fallback_thread = threading.Thread(target=fallback_loop, args=(stop_event,), daemon=True)
-    fallback_thread.start()
+    threading.Thread(target=fallback_loop, args=(stop_event,), daemon=True).start()
+    threading.Thread(target=geometry_loop, args=(stop_event, debouncer), daemon=True).start()
 
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
@@ -146,8 +179,28 @@ def run():
         stop_event.set()
 
 
+def wait_for_login_restore():
+    """At login this process starts alongside restore.py; anything saved
+    before the restore finishes would overwrite the layout being restored
+    with the bare fresh-login desktop. Panel.qml takes the restore lock
+    before creating the marker, so 'marker exists and no lock' reliably
+    means this login's restore is done. If restore-on-login is disabled the
+    marker never appears, hence the timeout."""
+    deadline = time.monotonic() + LOGIN_RESTORE_WAIT_SECS
+    while not RESTORE_MARKER.exists() and time.monotonic() < deadline:
+        time.sleep(1)
+    while restore_in_progress():
+        time.sleep(1)
+
+
 def main():
-    log("watch", "starting")
+    mid_session = RESTORE_MARKER.exists()
+    log("watch", "starting" + ("" if mid_session else " (login: waiting for restore)"))
+    wait_for_login_restore()
+    if mid_session:
+        # Restarted mid-session (shell restart, plugin update): events that
+        # fired while nothing was listening are lost, so resync once.
+        run_save("--all")
     while True:
         try:
             run()

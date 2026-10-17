@@ -12,11 +12,29 @@ import subprocess
 import time
 from pathlib import Path
 
-STATE_DIR = Path.home() / ".local/state/omarchy-workspace-control"
+STATE_DIR = Path(os.environ.get("WORKSPACE_CONTROL_STATE_DIR")
+                 or Path.home() / ".local/state/omarchy-workspace-control")
 STATE_FILE = STATE_DIR / "session.json"
 CONFIG_FILE = STATE_DIR / "config.json"
 LOG_FILE = STATE_DIR / "workspace-control.log"
 LOG_MAX_BYTES = 512 * 1024
+RESTORE_LOCK = STATE_DIR / "restore.lock"
+RESTORE_LOCK_MAX_AGE_SECS = 10 * 60
+# Created by Panel.qml when it launches this login's restore. Lives in the
+# runtime dir, so it exists exactly from that point until logout/reboot.
+RESTORE_MARKER = (Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
+                  / "omarchy-workspace-control-restore.marker")
+
+
+def restore_in_progress():
+    """True while restore.py is rebuilding the layout. Saving during that
+    window would snapshot half-built workspaces (and windows parked on the
+    staging workspace) over the good saved state. A lock older than
+    RESTORE_LOCK_MAX_AGE_SECS is treated as left behind by a crashed run."""
+    try:
+        return time.time() - RESTORE_LOCK.stat().st_mtime < RESTORE_LOCK_MAX_AGE_SECS
+    except OSError:
+        return False
 
 DEFAULT_CONFIG = {
     "debounceSec": 2,

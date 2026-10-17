@@ -1,35 +1,44 @@
 # Workspace Control
 
 An Omarchy bar plugin for workspace-related features, growing over time.
-The first feature: it remembers exactly which apps are open on each
-Hyprland workspace — window class, position, size, floating/pinned/
-fullscreen state, and (for terminals) the working directory — and puts
-them back after a reboot or logout.
+The first feature: it remembers every window on every Hyprland workspace
+and, after a reboot, logout, or crash, puts each one back on its workspace
+at its exact position and size, tiled or floating.
 
-Bar icon: a floppy-disk glyph, left side of the bar by default. Left-click
+Bar icon: a 2×2 grid glyph, left side of the bar by default. Left-click
 opens the config screen; right-click triggers an immediate full save.
 
 ## How it works
 
-- **Watching.** A background process listens to Hyprland's own event
-  socket and, a couple of seconds after you open, close, move, float,
-  pin, or fullscreen a window on a workspace, re-saves *only that
-  workspace*. Every other workspace's saved layout is left untouched.
-  Nothing runs while you're not changing your layout.
-- **The one gap events don't cover.** Hyprland does not emit an IPC event
-  for interactive window drags/resizes, so a floating window's position
-  can drift without the watcher knowing. A periodic full rescan (default
-  every 15 minutes, configurable) exists purely to catch that.
-- **Restoring.** Once per login, anything missing from the last saved
-  layout gets relaunched onto its saved workspace. This is
-  heuristic, not exact: it matches "already open" by window class + count
-  rather than individual window identity, and it reconstructs each app's
-  launch command from `/proc/<pid>/cmdline`, so an app launched through a
-  wrapper that doesn't preserve useful argv (some Electron/Flatpak/Snap
-  apps) may come back without its in-app state (e.g. browser tabs) — just
-  the app itself, on the right workspace. Tiled window split ratios are
-  left to Hyprland's normal layout, not reproduced exactly; floating
-  window position/size/pinned/fullscreen are restored exactly.
+- **Watching.** A background process listens to Hyprland's event socket
+  and re-saves a workspace a couple of seconds after you open, close,
+  move, float, pin, or fullscreen a window on it. Resizing a tiled split
+  or dragging a window emits no Hyprland event, so the watcher also
+  compares window rectangles every 5 seconds and re-saves any workspace
+  whose geometry changed. Only changed workspaces are written.
+- **Restoring exactly.** A dwindle workspace is a binary split tree, and
+  the saved window rectangles are its leaves, so restore recovers the tree
+  from the rectangles and rebuilds it one window at a time: open the first
+  window, then for each split focus the window occupying it, `preselect`
+  the direction and open the next one. Exact sizes are applied afterwards,
+  which recreates the saved split ratios. Floating windows get their exact
+  position and size; pinned and fullscreen state are reapplied, and focus
+  returns to the workspace you were on.
+- **Already-open windows are reused.** Anything open when restore runs
+  (autostarted apps, or everything when you press "Restore now"
+  mid-session) is moved into its saved slot instead of being launched a
+  second time.
+- **Launching.** Apps are relaunched with the arguments they were started
+  with, through `uwsm-app` like Omarchy's own launchers, so each gets its
+  own systemd scope and its output lands in `journalctl --user`.
+  Terminals reopen in the directory their shell was last in.
+- **Login ordering.** At login the watcher waits for that login's restore
+  to finish before saving anything, so a half-restored desktop can never
+  overwrite the saved layout. Each restore also keeps the layout it
+  restored from in `session.pre-restore.json`.
+- **Logging.** Everything the backend does, including any window that
+  failed to come back and why, is logged to
+  `~/.local/state/omarchy-workspace-control/workspace-control.log`.
 
 ## Requirements
 
@@ -67,9 +76,9 @@ All settings are in the plugin's popup panel (click the bar icon):
 | Setting | Default | Notes |
 |---|---|---|
 | Watch for layout changes | on | Turns the background watcher on/off |
-| Restore on login | on | Relaunch missing apps once per login |
+| Restore on login | on | Rebuild the saved layout once per login |
 | Save debounce (seconds) | 2 | Quiet period after the last change before saving |
-| Safety-net rescan (minutes) | 15 | Full rescan interval for drag/resize drift |
+| Safety-net rescan (minutes) | 15 | Periodic full resync with the live session |
 | Excluded app classes | (none) | Comma-separated window classes to never save/restore |
 
 State lives outside the plugin folder, under
@@ -81,10 +90,15 @@ frequent state writes there would cause spurious reloads.
 
 ## Known limitations
 
-- Window-identity matching on restore is by class + count, not exact
-  window, so two windows of the same app aren't individually tracked.
-- No browser tab / in-app state restore — only the app and its window
-  geometry.
+- Exact tiled placement assumes the dwindle layout (Omarchy's default).
+- In-app state (browser tabs, open files, a terminal's running program's
+  history) is up to each app; what's restored is the app, its launch
+  arguments, its working directory and its window geometry.
+- An app that opens extra windows on its own when launched (e.g. an editor
+  restoring its previous windows) adds windows the saved layout doesn't
+  know about.
+- Windows on special (scratchpad) workspaces are reopened there but not
+  repositioned.
 - Depends on Omarchy's non-upstream Hyprland dispatcher API; a fork or
   major Hyprland version bump could change it again.
 
