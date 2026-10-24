@@ -8,15 +8,6 @@ at its exact position and size, tiled or floating.
 Bar icon: a 2×2 grid glyph, left side of the bar by default. Left-click
 opens the config screen; right-click triggers an immediate full save.
 
-## Screenshots
-
-Open the plugin's bar icon to see saved window counts and automation settings.
-Scroll down in the same panel to save, restore, or clear the saved session.
-
-| Saved layouts and automation | Manual save and restore actions |
-| :---: | :---: |
-| <img src="docs/screenshots/workspace-control-panel.png" alt="Workspace Control panel showing saved windows, layout watching, restore on login, and save timing" width="340"> | <img src="docs/screenshots/workspace-control-actions.png" alt="Workspace Control panel scrolled down to exclusions and the Save now, Restore now, and Clear saved session buttons" width="340"> |
-
 ## How it works
 
 - **Watching.** A background process listens to Hyprland's event socket
@@ -91,11 +82,10 @@ rm -rf ~/.local/state/omarchy-workspace-control
 
 ## Configuration
 
-All settings are in the plugin's popup panel (click the bar icon):
+Click the plugin's bar icon to open its panel. It shows saved window counts
+per workspace and controls automatic saving and login restoration.
 
-The panel shows saved window counts per workspace and controls automatic
-saving and login restoration. Scroll down for **Save now**, **Restore now**,
-and **Clear saved session**.
+<img src="docs/screenshots/workspace-control-panel.png" alt="Workspace Control panel showing saved windows, layout watching, restore on login, and save timing" width="380">
 
 | Setting | Default | Notes |
 |---|---|---|
@@ -111,6 +101,21 @@ layout, `config.json` mirroring the settings above for the Python backend
 to read) — deliberately outside `~/.config/omarchy/plugins/`, since
 Omarchy hot-reloads plugin code on any write under that directory and
 frequent state writes there would cause spurious reloads.
+
+### Save, restore, and recovery
+
+Scroll down in the panel to reach the manual actions:
+
+- **Save now** replaces the saved layout with the current desktop.
+- **Restore now** restores the saved layout, reusing already-open windows
+  and launching any that are missing.
+- **Clear saved session** deletes the saved layout and its recovery backup.
+
+<img src="docs/screenshots/workspace-control-actions.png" alt="Workspace Control panel scrolled down to exclusions and the Save now, Restore now, and Clear saved session buttons" width="380">
+
+If a restore fails or is interrupted, automatic saves pause to protect the
+saved layout. Use **Restore now** to retry, or **Save now** to accept the
+current desktop and resume automatic saving.
 
 ## Known limitations
 
