@@ -180,12 +180,9 @@ def run():
 
 
 def wait_for_login_restore():
-    """At login this process starts alongside restore.py; anything saved
-    before the restore finishes would overwrite the layout being restored
-    with the bare fresh-login desktop. Panel.qml takes the restore lock
-    before creating the marker, so 'marker exists and no lock' reliably
-    means this login's restore is done. If restore-on-login is disabled the
-    marker never appears, hence the timeout."""
+    """Wait for the login launch to finish. Python owns the kernel lock;
+    the marker is created by the shell after restore exits. Saves also take
+    the operation lock and honor the persistent recovery guard."""
     deadline = time.monotonic() + LOGIN_RESTORE_WAIT_SECS
     while not RESTORE_MARKER.exists() and time.monotonic() < deadline:
         time.sleep(1)

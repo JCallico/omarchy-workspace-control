@@ -72,7 +72,7 @@ Panel {
 
   function saveNow() {
     lastActionStatus = "Saving..."
-    saveNowProcess.command = [root.pythonBin, "-B", root.scriptsPath + "/save.py", "--all"]
+    saveNowProcess.command = [root.pythonBin, "-B", root.scriptsPath + "/save.py", "--all", "--force"]
     saveNowProcess.running = true
   }
 
@@ -83,21 +83,17 @@ Panel {
   }
 
   function clearSession() {
-    Quickshell.execDetached(["rm", "-f", root.sessionFile])
-    lastActionStatus = "Cleared saved session"
+    lastActionStatus = "Clearing..."
+    clearProcess.running = true
   }
 
   function runRestoreOnLoginOnce() {
-    // Shell-level guard so a plugin hot-reload mid-session (which re-runs
-    // Component.onCompleted) never re-triggers restore -- only a real
-    // reboot/login clears $XDG_RUNTIME_DIR.
-    // The restore lock is taken before the marker appears: watch.py treats
-    // "marker present, no lock" as "this login's restore is done" and only
-    // then starts saving, so the lock must never trail the marker.
+    // The marker guards login launches; Python owns the actual process lock.
+    // Watcher waits for this marker, then serializes saves through that lock.
     var cmd = "MARKER=" + shellQuote(root.restoreMarker) + "; " +
-      "[ -e \"$MARKER\" ] || { mkdir -p " + shellQuote(root.stateDir) + "; " +
-      "touch " + shellQuote(root.stateDir + "/restore.lock") + " \"$MARKER\"; " +
-      shellQuote(root.pythonBin) + " -B " + shellQuote(root.scriptsPath + "/restore.py") + "; }"
+      "[ -e \"$MARKER\" ] || { " +
+      shellQuote(root.pythonBin) + " -B " + shellQuote(root.scriptsPath + "/restore.py") +
+      "; touch \"$MARKER\"; }"
     Quickshell.execDetached(["sh", "-c", cmd])
   }
 
@@ -152,13 +148,20 @@ Panel {
   Process {
     id: saveNowProcess
     running: false
-    onExited: root.lastActionStatus = "Saved"
+    onExited: function (exitCode) { root.lastActionStatus = exitCode === 0 ? "Saved" : "Save failed; see log" }
   }
 
   Process {
     id: restoreNowProcess
     running: false
-    onExited: root.lastActionStatus = "Restore complete"
+    onExited: function (exitCode) { root.lastActionStatus = exitCode === 0 ? "Restore complete" : "Restore incomplete; see log. Automatic saves paused if recovery is needed." }
+  }
+
+  Process {
+    id: clearProcess
+    command: [root.pythonBin, "-B", root.scriptsPath + "/save.py", "--clear"]
+    running: false
+    onExited: function (exitCode) { root.lastActionStatus = exitCode === 0 ? "Cleared saved session" : "Clear failed; see log" }
   }
 
   FileView {
@@ -358,7 +361,7 @@ Panel {
 
           Button {
             text: "Save now"
-            tooltipText: "Snapshot every workspace's current layout"
+            tooltipText: "Replace the saved and recovery layout with the current desktop"
             foreground: root.contentForeground
             fontFamily: root.contentFontFamily
             onClicked: root.saveNow()

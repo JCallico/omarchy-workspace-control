@@ -43,7 +43,8 @@ import time
 import traceback
 from pathlib import Path
 
-from common import (RESTORE_LOCK, STATE_DIR, STATE_FILE, hyprctl_json, hyprctl_repl, log,
+from common import (OPERATION_LOCK, RECOVERY_FILE, RESTORE_LOCK, STATE_DIR, STATE_FILE,
+                    file_lock, hyprctl_json, hyprctl_repl, log,
                     lua_str, load_state, wait_for_hyprctl)
 
 HYPRCTL_READY_TIMEOUT_SECS = 30
@@ -207,7 +208,51 @@ class Restorer:
         self.pool = {}
         for c in existing:
             self.pool.setdefault(c.get("class"), []).append(c)
+        self.existing = {c["address"]: c for c in existing}
+        self.parked = set()
+        self.placed = set()
         self.opened = {}  # id(saved window record) -> address
+
+    def normalize(self, addr, floating):
+        dispatch(f'hl.dispatch(hl.dsp.window.fullscreen_state({{ internal = 0, client = 0, '
+                 f'action = "set", window = {sel(addr)} }}))')
+        current = next((c for c in hyprctl_json("clients") if c["address"] == addr), {})
+        # Hyprland rejects even "off" for tiled/unpinned fullscreen windows.
+        if current.get("pinned"):
+            dispatch(f'hl.dispatch(hl.dsp.window.pin({{ action = "off", window = {sel(addr)} }}))')
+        action = "on" if floating else "off"
+        dispatch(f'hl.dispatch(hl.dsp.window.float({{ action = "{action}", window = {sel(addr)} }}))')
+
+    def recover_staging(self):
+        # Include claimed windows too: moving one out may itself have failed.
+        # Attempt every window even if IPC or an individual dispatch fails.
+        failed = False
+        try:
+            live = {c["address"]: c for c in hyprctl_json("clients")}
+        except Exception as exc:
+            log("restore", f"cannot query staging; returning all parked windows: {exc}")
+            live = None
+        for addr in self.parked:
+            c = self.existing[addr]
+            if live is not None:
+                current = live.get(addr)
+                if not current:
+                    continue
+                if addr in self.placed and (current.get("workspace") or {}).get("name") != STAGING_WORKSPACE:
+                    continue
+            try:
+                dispatch(f"hl.dispatch(hl.dsp.window.move({{ workspace = {lua_str(c['_orig_ws'] or '1')}, "
+                         f"follow = false, window = {sel(addr)} }}))")
+                self.normalize(addr, bool(c.get("floating")))
+                if c.get("pinned"):
+                    dispatch(f'hl.dispatch(hl.dsp.window.pin({{ action = "on", window = {sel(addr)} }}))')
+                if c.get("fullscreen"):
+                    mode = "maximized" if c["fullscreen"] == 1 else "fullscreen"
+                    dispatch(f'hl.dispatch(hl.dsp.window.fullscreen({{ mode = "{mode}", action = "set", window = {sel(addr)} }}))')
+            except Exception as exc:
+                failed = True
+                log("restore", f"could not recover staged window {addr}: {exc}")
+        return not failed
 
     def claim_existing(self, w, ws_name):
         candidates = self.pool.get(w.get("class")) or []
@@ -246,16 +291,19 @@ class Restorer:
         """Open saved window `w` on workspace `ws_name`, splitting `anchor`
         in `direction` (or onto the empty workspace if anchor is None).
         Returns the window's address, or None if it never appeared."""
+        addr = self.claim_existing(w, ws_name)
+        if addr:
+            self.normalize(addr, bool(w.get("floating")))
         if anchor:
             dispatch(f"hl.dispatch(hl.dsp.focus({{ window = {sel(anchor)} }}))")
             dispatch(f'hl.dispatch(hl.dsp.layout("preselect {direction}"))')
         else:
             dispatch(f"hl.dispatch(hl.dsp.focus({{ workspace = {lua_str(ws_name)} }}))")
 
-        addr = self.claim_existing(w, ws_name)
         if addr:
             dispatch(f"hl.dispatch(hl.dsp.window.move({{ workspace = {lua_str(ws_name)}, "
                      f"follow = false, window = {sel(addr)} }}))")
+            self.placed.add(addr)
             log("restore", f"  reused open {w['class']} on {ws_name}")
         else:
             cmd = shell_command(w)
@@ -311,11 +359,11 @@ def run():
     if not workspaces:
         log("restore", "no saved session found; nothing to restore")
         print("No saved session found; nothing to restore.")
-        return
+        return True
 
     if not DRY_RUN and not wait_for_hyprctl(HYPRCTL_READY_TIMEOUT_SECS):
         log("restore", f"hyprctl never became ready within {HYPRCTL_READY_TIMEOUT_SECS}s; aborting")
-        return
+        return False
 
     saved_classes = {w["class"] for ws in workspaces.values() for w in ws}
     existing = []
@@ -328,112 +376,129 @@ def run():
     log("restore", f"restoring {total} window(s) on {len(workspaces)} workspace(s); "
         f"{len(existing)} matching window(s) already open will be reused")
 
-    # Park already-open windows so every workspace starts empty and the
-    # split tree can be rebuilt from scratch.
-    for c in existing:
-        dispatch(f"hl.dispatch(hl.dsp.window.move({{ workspace = {lua_str(STAGING_WORKSPACE)}, "
-                 f"follow = false, window = {sel(c['address'])} }}))")
-
     restorer = Restorer(existing)
-    plans = {}
-
-    for ws_name, windows in workspaces.items():
-        tiled = [w for w in windows if not w.get("floating") and not is_special(ws_name)]
-        floating = [w for w in windows if w not in tiled]
-        log("restore", f"workspace {ws_name}: {len(tiled)} tiled, {len(floating)} floating")
-
-        if tiled:
-            tree = build_tree([Leaf(w) for w in tiled])
-            if DRY_RUN:
-                print(f"workspace {ws_name} tree:\n{describe(tree)}", end="")
-            plans[ws_name] = tree
-            addr, tree = restorer.open_subtree_rep(tree, ws_name, None, None)
-            if addr:
-                restorer.realize(tree, ws_name, addr)
-
-        for w in floating:
-            addr = restorer.open_window(w, ws_name, None, None)
-            if not addr:
-                continue
-            dispatch(f'hl.dispatch(hl.dsp.window.float({{ action = "on", window = {sel(addr)} }}))')
-            size, at = w.get("size"), w.get("at")
-            if size:
-                dispatch(f"hl.dispatch(hl.dsp.window.resize({{ x = {size[0]}, y = {size[1]}, "
-                         f"relative = false, window = {sel(addr)} }}))")
-            if at:
-                dispatch(f"hl.dispatch(hl.dsp.window.move({{ x = {at[0]}, y = {at[1]}, "
-                         f"relative = false, window = {sel(addr)} }}))")
-
-    if DRY_RUN:
-        return
-
-    # Exact tiled sizes. Each resize shifts the splits around one window,
-    # which moves its neighbours, so a few passes are needed to settle.
-    tiled_windows = [(ws_name, w) for ws_name, ws in workspaces.items() for w in ws
-                     if not w.get("floating") and not is_special(ws_name)
-                     and id(w) in restorer.opened]
-    for _ in range(SIZE_PASSES):
-        for _ws, w in tiled_windows:
-            addr = restorer.opened[id(w)]
-            dispatch(f"hl.dispatch(hl.dsp.window.resize({{ x = {w['size'][0]}, y = {w['size'][1]}, "
-                     f"relative = false, window = {sel(addr)} }}))")
-        time.sleep(0.2)
-
-    for ws, ws_windows in workspaces.items():
-        for w in ws_windows:
-            addr = restorer.opened.get(id(w))
-            if not addr:
-                continue
-            if w.get("pinned"):
-                dispatch(f"hl.dispatch(hl.dsp.window.pin({{ window = {sel(addr)} }}))")
-            if w.get("fullscreen"):
-                dispatch(f'hl.dispatch(hl.dsp.window.fullscreen({{ mode = "fullscreen", window = {sel(addr)} }}))')
-
-    # Anything left in staging didn't match a saved window; don't strand it.
-    for leftovers in restorer.pool.values():
-        for c in leftovers:
-            dispatch(f"hl.dispatch(hl.dsp.window.move({{ workspace = {lua_str(c['_orig_ws'] or '1')}, "
+    success = False
+    recovered = True
+    try:
+        # Park already-open windows so every workspace starts empty and the
+        # split tree can be rebuilt from scratch.
+        for c in existing:
+            restorer.parked.add(c["address"])
+            # Unpin before moving so pinned windows can actually enter staging.
+            if c.get("pinned"):
+                dispatch(f'hl.dispatch(hl.dsp.window.fullscreen_state({{ internal = 0, client = 0, action = "set", window = {sel(c["address"])} }}))')
+                dispatch(f'hl.dispatch(hl.dsp.window.pin({{ action = "off", window = {sel(c["address"])} }}))')
+            dispatch(f"hl.dispatch(hl.dsp.window.move({{ workspace = {lua_str(STAGING_WORKSPACE)}, "
                      f"follow = false, window = {sel(c['address'])} }}))")
 
-    active = state.get("active_workspace") or next(iter(workspaces))
-    dispatch(f"hl.dispatch(hl.dsp.focus({{ workspace = {lua_str(active)} }}))")
+        for ws_name, windows in workspaces.items():
+            tiled = [w for w in windows if not w.get("floating") and not is_special(ws_name)]
+            floating = [w for w in windows if w not in tiled]
+            log("restore", f"workspace {ws_name}: {len(tiled)} tiled, {len(floating)} floating")
 
-    # Report how close each window landed to where it was saved.
-    live = {c["address"]: c for c in hyprctl_json("clients")}
-    off = []
-    for ws_name, ws in workspaces.items():
-        for w in ws:
-            c = live.get(restorer.opened.get(id(w)))
-            if not c:
-                continue
-            dx = abs(c["at"][0] - w["at"][0]) + abs(c["at"][1] - w["at"][1])
-            ds = abs(c["size"][0] - w["size"][0]) + abs(c["size"][1] - w["size"][1])
-            if dx + ds > 4:
-                off.append(f"{w['class']}@{ws_name} off by {dx}px pos/{ds}px size")
-    restored = len(restorer.opened)
-    log("restore", f"done: {restored}/{total} window(s) restored" +
-        (f"; geometry mismatches: {off}" if off else "; all at their saved geometry"))
+            if tiled:
+                tree = build_tree([Leaf(w) for w in tiled])
+                if DRY_RUN:
+                    print(f"workspace {ws_name} tree:\n{describe(tree)}", end="")
+                addr, tree = restorer.open_subtree_rep(tree, ws_name, None, None)
+                if addr:
+                    restorer.realize(tree, ws_name, addr)
+
+            for w in floating:
+                addr = restorer.open_window(w, ws_name, None, None)
+                if not addr:
+                    continue
+                dispatch(f'hl.dispatch(hl.dsp.window.float({{ action = "on", window = {sel(addr)} }}))')
+                size, at = w.get("size"), w.get("at")
+                if size:
+                    dispatch(f"hl.dispatch(hl.dsp.window.resize({{ x = {size[0]}, y = {size[1]}, "
+                             f"relative = false, window = {sel(addr)} }}))")
+                if at:
+                    dispatch(f"hl.dispatch(hl.dsp.window.move({{ x = {at[0]}, y = {at[1]}, "
+                             f"relative = false, window = {sel(addr)} }}))")
+
+        if DRY_RUN:
+            return True
+
+        # Exact tiled sizes. Each resize shifts the splits around one window,
+        # which moves its neighbours, so a few passes are needed to settle.
+        tiled_windows = [(ws_name, w) for ws_name, ws in workspaces.items() for w in ws
+                         if not w.get("floating") and not is_special(ws_name)
+                         and id(w) in restorer.opened]
+        for _ in range(SIZE_PASSES):
+            for _ws, w in tiled_windows:
+                addr = restorer.opened[id(w)]
+                dispatch(f"hl.dispatch(hl.dsp.window.resize({{ x = {w['size'][0]}, y = {w['size'][1]}, "
+                         f"relative = false, window = {sel(addr)} }}))")
+            time.sleep(0.2)
+
+        for ws, ws_windows in workspaces.items():
+            for w in ws_windows:
+                addr = restorer.opened.get(id(w))
+                if not addr:
+                    continue
+                if w.get("pinned"):
+                    dispatch(f'hl.dispatch(hl.dsp.window.pin({{ action = "on", window = {sel(addr)} }}))')
+                if w.get("fullscreen"):
+                    mode = "maximized" if type(w["fullscreen"]) is int and w["fullscreen"] == 1 else "fullscreen"
+                    dispatch(f'hl.dispatch(hl.dsp.window.fullscreen({{ mode = "{mode}", action = "set", window = {sel(addr)} }}))')
+
+        active = state.get("active_workspace") or next(iter(workspaces))
+        dispatch(f"hl.dispatch(hl.dsp.focus({{ workspace = {lua_str(active)} }}))")
+
+        # Report how close each window landed to where it was saved.
+        live = {c["address"]: c for c in hyprctl_json("clients")}
+        off = []
+        for ws_name, ws in workspaces.items():
+            for w in ws:
+                c = live.get(restorer.opened.get(id(w)))
+                if not c:
+                    continue
+                dx = abs(c["at"][0] - w["at"][0]) + abs(c["at"][1] - w["at"][1])
+                ds = abs(c["size"][0] - w["size"][0]) + abs(c["size"][1] - w["size"][1])
+                if dx + ds > 4:
+                    off.append(f"{w['class']}@{ws_name} off by {dx}px pos/{ds}px size")
+        restored = sum(
+            1 for ws_name, ws in workspaces.items() for w in ws
+            if (live.get(restorer.opened.get(id(w)), {}).get("workspace") or {}).get("name") == ws_name
+        )
+        log("restore", f"done: {restored}/{total} window(s) restored" +
+            (f"; geometry mismatches: {off}" if off else "; all at their saved geometry"))
+
+        success = restored == total
+    finally:
+        if not DRY_RUN:
+            recovered = restorer.recover_staging()
+    return success and recovered
 
 
 def main():
     log("restore", "starting" + (" (dry-run)" if DRY_RUN else ""))
-    if not DRY_RUN:
-        STATE_DIR.mkdir(parents=True, exist_ok=True)
-        RESTORE_LOCK.touch()
-        if STATE_FILE.exists():
-            shutil.copy2(STATE_FILE, STATE_DIR / "session.pre-restore.json")
-    try:
-        run()
-    except Exception:
-        log("restore", "CRASHED:\n" + traceback.format_exc())
-        raise
-    finally:
-        # Deliberately no save here: after a partial or crashed restore that
-        # would overwrite the good saved layout with the incomplete one, and
-        # forget any app that failed to start this time.
-        if not DRY_RUN:
-            RESTORE_LOCK.unlink(missing_ok=True)
+    if DRY_RUN:
+        return run()
+    # The restore lock rejects concurrent restores; the operation lock also
+    # excludes saves, including ones that began just before restoration.
+    with file_lock(RESTORE_LOCK, blocking=False) as acquired:
+        if not acquired:
+            log("restore", "another restore is already running")
+            return False
+        with file_lock(OPERATION_LOCK):
+            try:
+                # Keep the original backup across failed/interrupted retries.
+                if not RECOVERY_FILE.exists():
+                    if STATE_FILE.exists():
+                        shutil.copy2(STATE_FILE, STATE_DIR / "session.pre-restore.json")
+                    RECOVERY_FILE.touch()
+                success = run()
+                if success:
+                    RECOVERY_FILE.unlink(missing_ok=True)
+                else:
+                    log("restore", "incomplete; automatic saves paused until restore succeeds or Save now replaces the layout")
+                return success
+            except Exception:
+                log("restore", "CRASHED; automatic saves paused:\n" + traceback.format_exc())
+                raise
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(0 if main() else 1)

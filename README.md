@@ -36,6 +36,17 @@ opens the config screen; right-click triggers an immediate full save.
   to finish before saving anything, so a half-restored desktop can never
   overwrite the saved layout. Each restore also keeps the layout it
   restored from in `session.pre-restore.json`.
+- **Recovery protection.** If restoration fails, is interrupted, or cannot
+  reopen every window, automatic saves pause so the original layout and
+  backup survive retries and shell restarts. Click **Restore now** to retry,
+  or **Save now** to explicitly replace the saved layout with the current
+  desktop and resume automatic saves. **Clear saved session** removes both
+  the saved layout and its recovery backup.
+- **Concurrency.** Saves serialize their complete read/update/write cycle.
+  Restoration excludes saves and rejects simultaneous restore attempts.
+  Kernel locks release automatically if a process exits or crashes; they
+  have no fixed expiry. Windows left in staging after an exception are
+  returned to their original workspace on a best-effort basis.
 - **Logging.** Everything the backend does, including any window that
   failed to come back and why, is logged to
   `~/.local/state/omarchy-workspace-control/workspace-control.log`.
@@ -106,3 +117,15 @@ frequent state writes there would cause spurious reloads.
 
 This plugin is meant to grow into a general workspace toolkit, not stay
 scoped to save/restore. Layout persistence is just the first feature.
+
+## Tests
+
+Run the isolated backend regression suite (Python standard library only):
+
+```sh
+python3 -B -m unittest discover -s tests -v
+```
+
+Tests use temporary state and mocked Hyprland commands; they do not move
+real windows. Process-level cases cover concurrent saves, exclusive
+restoration, and lock release after a killed process.

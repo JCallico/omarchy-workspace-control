@@ -6,6 +6,8 @@ any write under ~/.config/omarchy/plugins/, so writing frequent state/
 session files there would cause spurious shell reloads.
 """
 import datetime
+import fcntl
+from contextlib import contextmanager
 import json
 import os
 import subprocess
@@ -19,22 +21,35 @@ CONFIG_FILE = STATE_DIR / "config.json"
 LOG_FILE = STATE_DIR / "workspace-control.log"
 LOG_MAX_BYTES = 512 * 1024
 RESTORE_LOCK = STATE_DIR / "restore.lock"
-RESTORE_LOCK_MAX_AGE_SECS = 10 * 60
-# Created by Panel.qml when it launches this login's restore. Lives in the
+OPERATION_LOCK = STATE_DIR / "operation.lock"
+RECOVERY_FILE = STATE_DIR / "restore.pending"
+# Created by Panel.qml after this login's restore exits. Lives in the
 # runtime dir, so it exists exactly from that point until logout/reboot.
 RESTORE_MARKER = (Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
                   / "omarchy-workspace-control-restore.marker")
 
 
+@contextmanager
+def file_lock(path, blocking=True):
+    """Kernel-owned lock: never unlink it, which would split lock ownership.
+    The descriptor closes on process exit, including crashes."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
 def restore_in_progress():
-    """True while restore.py is rebuilding the layout. Saving during that
-    window would snapshot half-built workspaces (and windows parked on the
-    staging workspace) over the good saved state. A lock older than
-    RESTORE_LOCK_MAX_AGE_SECS is treated as left behind by a crashed run."""
-    try:
-        return time.time() - RESTORE_LOCK.stat().st_mtime < RESTORE_LOCK_MAX_AGE_SECS
-    except OSError:
-        return False
+    with file_lock(RESTORE_LOCK, blocking=False) as acquired:
+        return not acquired
+
 
 DEFAULT_CONFIG = {
     "debounceSec": 2,
@@ -53,7 +68,16 @@ def hyprctl_repl(code):
     fork exposes an `hl`/`hl.dsp` Lua dispatcher API in place of upstream's
     plain-text `hyprctl dispatch <disp> <args>`; verified live against this
     machine's Hyprland 0.56.2 build)."""
-    subprocess.run(["hyprctl", "repl", code], capture_output=True, text=True)
+    # hyprctl can exit zero for Lua/dispatcher failures. Require an explicit
+    # success sentinel from the dispatcher result as well as process success.
+    wrapped = ("local result = " + code + "; "
+               "if type(result) ~= 'table' or not result.ok then "
+               "error(type(result) == 'table' and result.error or 'invalid dispatcher result') end; "
+               "return 'workspace-control-ok'")
+    result = subprocess.run(["hyprctl", "repl", wrapped], capture_output=True,
+                            text=True, check=True)
+    if result.stdout.strip() != "workspace-control-ok":
+        raise RuntimeError(f"Hyprland dispatcher failed: {result.stdout.strip()} {result.stderr.strip()}")
 
 
 def lua_str(s):
