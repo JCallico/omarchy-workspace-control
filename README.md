@@ -8,6 +8,15 @@ at its exact position and size, tiled or floating.
 Bar icon: a 2×2 grid glyph, left side of the bar by default. Left-click
 opens the config screen; right-click triggers an immediate full save.
 
+## Screenshots
+
+![Restored demo workspace with two tiled terminals and a floating notes window](docs/screenshots/restored-workspace.png)
+
+An isolated demo restored four windows across two workspaces at their saved
+positions and sizes. This workspace contains two tiled windows and a floating
+notes window; the fourth window returned to the other workspace. Terminal
+content is sample data.
+
 ## How it works
 
 - **Watching.** A background process listens to Hyprland's event socket
@@ -83,6 +92,12 @@ rm -rf ~/.local/state/omarchy-workspace-control
 ## Configuration
 
 All settings are in the plugin's popup panel (click the bar icon):
+
+<img src="docs/screenshots/workspace-control-panel.png" alt="Workspace Control panel showing the saved window count, automatic layout watching, restore on login, save timing, and excluded app classes" width="380">
+
+The panel shows saved window counts per workspace and controls automatic
+saving and login restoration. Scroll down for **Save now**, **Restore now**,
+and **Clear saved session**.
 
 | Setting | Default | Notes |
 |---|---|---|
