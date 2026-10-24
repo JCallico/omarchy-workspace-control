@@ -10,12 +10,12 @@ opens the config screen; right-click triggers an immediate full save.
 
 ## Screenshots
 
-![Restored demo workspace with two tiled terminals and a floating notes window](docs/screenshots/restored-workspace.png)
+Open the plugin's bar icon to see saved window counts and automation settings.
+Scroll down in the same panel to save, restore, or clear the saved session.
 
-An isolated demo restored four windows across two workspaces at their saved
-positions and sizes. This workspace contains two tiled windows and a floating
-notes window; the fourth window returned to the other workspace. Terminal
-content is sample data.
+| Saved layouts and automation | Manual save and restore actions |
+| :---: | :---: |
+| <img src="docs/screenshots/workspace-control-panel.png" alt="Workspace Control panel showing saved windows, layout watching, restore on login, and save timing" width="340"> | <img src="docs/screenshots/workspace-control-actions.png" alt="Workspace Control panel scrolled down to exclusions and the Save now, Restore now, and Clear saved session buttons" width="340"> |
 
 ## How it works
 
@@ -92,8 +92,6 @@ rm -rf ~/.local/state/omarchy-workspace-control
 ## Configuration
 
 All settings are in the plugin's popup panel (click the bar icon):
-
-<img src="docs/screenshots/workspace-control-panel.png" alt="Workspace Control panel showing the saved window count, automatic layout watching, restore on login, save timing, and excluded app classes" width="380">
 
 The panel shows saved window counts per workspace and controls automatic
 saving and login restoration. Scroll down for **Save now**, **Restore now**,

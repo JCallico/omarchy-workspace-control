@@ -355,7 +355,7 @@ Panel {
           fontFamily: root.contentFontFamily
         }
 
-        Row {
+        Flow {
           width: parent.width
           spacing: Style.space(8)
 
